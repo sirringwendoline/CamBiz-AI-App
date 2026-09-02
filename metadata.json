@@ -1,0 +1,7 @@
+{
+  "name": "CamBiz AI",
+  "description": "The AI Business Automation Assistant for small and growing businesses in Cameroon. Manage customer enquiries, generate professional quotations in FCFA, organize requests, and automate follow-ups.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
