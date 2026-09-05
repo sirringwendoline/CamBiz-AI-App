@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
@@ -31,7 +31,7 @@ import {
   initialBusinessSettings 
 } from './data/mockData';
 
-import { analyzeCustomerRequest } from './services/api';
+import { analyzeCustomerRequest, fetchServerRequests } from './services/api';
 import { formatFCFA } from './utils/formatters';
 
 export default function App() {
@@ -137,6 +137,49 @@ export default function App() {
     };
     setActivities((prev) => [newLog, ...prev]);
   };
+
+  // Fetch requests from backend (Google Forms / Google Apps Script bridge) and merge without duplicates
+  const syncServerRequests = useCallback(async () => {
+    try {
+      const serverRequests = await fetchServerRequests();
+      if (!serverRequests || !Array.isArray(serverRequests) || serverRequests.length === 0) {
+        return;
+      }
+
+      setRequests((prev) => {
+        const existingIds = new Set(prev.map((r) => r.id));
+        const existingTicketNumbers = new Set(prev.map((r) => r.ticketNumber));
+
+        const newItems = serverRequests.filter(
+          (sr) => !existingIds.has(sr.id) && !existingTicketNumbers.has(sr.ticketNumber)
+        );
+
+        if (newItems.length === 0) {
+          return prev;
+        }
+
+        newItems.forEach((item) => {
+          logActivity(
+            'request_created',
+            `Google Form Submission: ${item.customerName}`,
+            `${item.serviceType || 'Service'} (${item.city || 'Cameroon'}) - ${item.ticketNumber}`
+          );
+        });
+
+        showToast(`${newItems.length} new customer enquiry${newItems.length > 1 ? 's' : ''} received from Google Forms.`);
+        return [...newItems, ...prev];
+      });
+    } catch (err) {
+      console.warn('Error syncing requests from server:', err);
+    }
+  }, []);
+
+  // Poll backend for new incoming Google Form submissions
+  useEffect(() => {
+    syncServerRequests();
+    const interval = setInterval(syncServerRequests, 15000);
+    return () => clearInterval(interval);
+  }, [syncServerRequests]);
 
   // Calculations for Badges
   const pendingRequestsCount = requests.filter((r) => r.status === 'New' || r.status === 'Under Review').length;
@@ -446,6 +489,7 @@ export default function App() {
                 onCreateQuoteFromRequest={handleCreateQuoteFromRequest}
                 onCreateFollowupFromRequest={(req) => handleCreateFollowupFromRequest(req)}
                 onUpdateStatus={handleUpdateStatus}
+                onSyncServerRequests={syncServerRequests}
               />
             )}
 

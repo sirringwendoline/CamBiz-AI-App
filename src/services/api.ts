@@ -115,3 +115,25 @@ export async function generateAiFollowUp(params: {
     channel: params.channel || 'WhatsApp',
   });
 }
+
+/**
+ * Retrieves customer requests collected by the backend (e.g. from Google Forms webhook)
+ */
+export async function fetchServerRequests(): Promise<CustomerRequest[]> {
+  try {
+    const res = await fetch('/api/requests');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        return data;
+      }
+      if (data && Array.isArray(data.requests)) {
+        return data.requests;
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch requests from server:', err);
+  }
+  return [];
+}
+

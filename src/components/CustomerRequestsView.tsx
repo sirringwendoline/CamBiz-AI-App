@@ -17,10 +17,16 @@ import {
   ChevronRight,
   ExternalLink,
   CheckCircle2,
-  Clock
+  Clock,
+  Copy,
+  Eye,
+  RefreshCw
 } from 'lucide-react';
 import { CustomerRequest, RequestStatus, ServiceType } from '../types';
 import { formatDateOnly, formatDateTime, getWhatsAppUrl } from '../utils/formatters';
+
+const GOOGLE_FORM_VIEW_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeg5AFatmLbv2HMawCCcinfExJy1clH-fLQcpqP0HS4XmNHCA/viewform';
+const GOOGLE_FORM_EMBED_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSeg5AFatmLbv2HMawCCcinfExJy1clH-fLQcpqP0HS4XmNHCA/viewform?embedded=true';
 
 interface CustomerRequestsViewProps {
   requests: CustomerRequest[];
@@ -29,6 +35,7 @@ interface CustomerRequestsViewProps {
   onCreateQuoteFromRequest: (request: CustomerRequest) => void;
   onCreateFollowupFromRequest: (request: CustomerRequest) => void;
   onUpdateStatus: (requestId: string, status: RequestStatus) => void;
+  onSyncServerRequests?: () => Promise<void> | void;
 }
 
 export const CustomerRequestsView: React.FC<CustomerRequestsViewProps> = ({
@@ -38,11 +45,35 @@ export const CustomerRequestsView: React.FC<CustomerRequestsViewProps> = ({
   onCreateQuoteFromRequest,
   onCreateFollowupFromRequest,
   onUpdateStatus,
+  onSyncServerRequests,
 }) => {
+  const [activeTab, setActiveTab] = useState<'inquiries' | 'google-form'>('inquiries');
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [serviceFilter, setServiceFilter] = useState<string>('ALL');
   const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+
+  const handleManualSync = async () => {
+    if (!onSyncServerRequests || isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await onSyncServerRequests();
+    } finally {
+      setTimeout(() => setIsSyncing(false), 600);
+    }
+  };
+
+  const handleCopyFormLink = async () => {
+    try {
+      await navigator.clipboard.writeText(GOOGLE_FORM_VIEW_URL);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+    } catch {
+      // Fallback
+    }
+  };
 
   const filteredRequests = requests.filter((r) => {
     const matchesSearch = 
@@ -95,18 +126,210 @@ export const CustomerRequestsView: React.FC<CustomerRequestsViewProps> = ({
           </p>
         </div>
 
+        <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+          {/* Sync Server Requests Button */}
+          {onSyncServerRequests && (
+            <button
+              id="requests-sync-btn"
+              onClick={handleManualSync}
+              disabled={isSyncing}
+              className="px-3 py-2.5 rounded-xl bg-white hover:bg-stone-50 text-stone-700 text-xs sm:text-sm font-bold border border-stone-200 flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+              title="Sync latest submissions from Google Form / Google Apps Script bridge"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-stone-500 ${isSyncing ? 'animate-spin text-emerald-600' : ''}`} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync'}</span>
+            </button>
+          )}
+
+          {/* External Google Form Link */}
+          <a
+            id="requests-open-google-form-btn"
+            href={GOOGLE_FORM_VIEW_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3.5 py-2.5 rounded-xl bg-white hover:bg-stone-50 text-stone-700 text-xs sm:text-sm font-bold border border-stone-200 flex items-center gap-2 shadow-xs transition-colors"
+            title="Open existing Google Form in a new tab"
+          >
+            <ExternalLink className="w-4 h-4 text-stone-500" />
+            <span>Google Form</span>
+          </a>
+
+          {/* Existing New Customer Request Button */}
+          <button
+            id="requests-add-new-btn"
+            onClick={onOpenNewRequest}
+            className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Customer Request</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Navigation Sub-Tabs: Enquiries vs Google Form */}
+      <div className="flex items-center gap-2 border-b border-stone-200 pb-2">
         <button
-          id="requests-add-new-btn"
-          onClick={onOpenNewRequest}
-          className="px-4 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+          id="subtab-enquiries-records"
+          onClick={() => setActiveTab('inquiries')}
+          className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'inquiries'
+              ? 'bg-stone-900 text-white shadow-xs'
+              : 'bg-white text-stone-600 hover:text-stone-900 border border-stone-200'
+          }`}
         >
-          <Plus className="w-4 h-4" />
-          <span>New Customer Request</span>
+          <Inbox className="w-4 h-4" />
+          <span>Enquiry Records</span>
+          <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${
+            activeTab === 'inquiries' ? 'bg-stone-800 text-stone-200' : 'bg-stone-100 text-stone-600'
+          }`}>
+            {requests.length}
+          </span>
+        </button>
+
+        <button
+          id="subtab-google-form-intake"
+          onClick={() => setActiveTab('google-form')}
+          className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold flex items-center gap-2 transition-all cursor-pointer ${
+            activeTab === 'google-form'
+              ? 'bg-emerald-700 text-white shadow-xs'
+              : 'bg-white text-stone-600 hover:text-stone-900 border border-stone-200'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>Google Form Intake</span>
+          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+            activeTab === 'google-form' ? 'bg-emerald-800 text-emerald-100' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+          }`}>
+            Live Form
+          </span>
         </button>
       </div>
 
-      {/* Search & Filter Controls */}
-      <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+      {activeTab === 'google-form' ? (
+        /* Embedded Google Form Section */
+        <div className="space-y-4">
+          {/* Header Card */}
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-xs p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold font-display text-stone-900">
+                  Customer Intake Google Form
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  Connected
+                </span>
+              </div>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Submit customer enquiries directly below, or share this intake form link with clients via WhatsApp or email.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                id="copy-google-form-link-btn"
+                onClick={handleCopyFormLink}
+                className="px-3.5 py-2 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Copy Google Form link to clipboard"
+              >
+                {copiedLink ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span className="text-emerald-700 font-bold">Link Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4 text-stone-500" />
+                    <span>Copy Form Link</span>
+                  </>
+                )}
+              </button>
+
+              <a
+                id="open-external-google-form-btn"
+                href={GOOGLE_FORM_VIEW_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs"
+              >
+                <span>Open in Google Forms</span>
+                <ExternalLink className="w-3.5 h-3.5 text-emerald-200" />
+              </a>
+            </div>
+          </div>
+
+          {/* Embedded Google Form Iframe */}
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-xs overflow-hidden">
+            <div className="px-4 py-2.5 bg-stone-50 border-b border-stone-200 flex items-center justify-between text-xs text-stone-500">
+              <span className="font-mono text-[11px] truncate max-w-md text-stone-600">
+                {GOOGLE_FORM_VIEW_URL}
+              </span>
+              <span className="text-[11px] text-stone-400 font-medium">Google Forms Embed</span>
+            </div>
+            <div className="w-full bg-stone-50/40 flex justify-center">
+              <iframe
+                id="customer-request-google-form-iframe"
+                src={GOOGLE_FORM_EMBED_URL}
+                width="100%"
+                height="820"
+                frameBorder="0"
+                marginHeight={0}
+                marginWidth={0}
+                className="w-full border-0 min-h-[750px] bg-white"
+                title="Customer Request Google Form"
+              >
+                Loading Google Form…
+              </iframe>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* Existing Records View: Search, Filters, Table and Cards */
+        <>
+          {/* Quick Access Google Form Banner Card inside Records */}
+          <div className="bg-gradient-to-r from-emerald-50/80 via-teal-50/50 to-white border border-emerald-200/90 rounded-2xl p-4 sm:p-4.5 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-emerald-700 text-white shadow-xs">
+                <FileText className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs sm:text-sm font-bold text-stone-900">
+                    Online Intake Form (Google Form)
+                  </h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    Live Form
+                  </span>
+                </div>
+                <p className="text-xs text-stone-600 mt-0.5">
+                  Collect new inquiries via your existing Google Form. Submissions can be filled here or opened directly.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
+              <button
+                id="banner-view-embedded-form-btn"
+                onClick={() => setActiveTab('google-form')}
+                className="px-3.5 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>View Embedded Form</span>
+              </button>
+              <a
+                id="banner-open-external-form-btn"
+                href={GOOGLE_FORM_VIEW_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3.5 py-2 rounded-xl bg-white hover:bg-stone-50 text-stone-700 text-xs font-semibold border border-stone-200 flex items-center gap-1.5 transition-colors shadow-2xs"
+              >
+                <span>Open Form</span>
+                <ExternalLink className="w-3.5 h-3.5 text-stone-400" />
+              </a>
+            </div>
+          </div>
+
+          {/* Search & Filter Controls */}
+          <div className="bg-white p-4 rounded-2xl border border-stone-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Search input */}
         <div className="relative flex-1 min-w-[240px]">
           <Search className="w-4 h-4 text-stone-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -416,6 +639,8 @@ export const CustomerRequestsView: React.FC<CustomerRequestsViewProps> = ({
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   );

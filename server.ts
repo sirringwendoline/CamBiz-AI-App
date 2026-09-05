@@ -3,6 +3,7 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import fs from "fs";
 
 dotenv.config();
 
@@ -10,6 +11,35 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Persistent store for requests received via Google Form webhook
+const STORE_PATH = path.join(process.cwd(), "received_requests.json");
+
+function loadStoredRequests(): any[] {
+  try {
+    if (fs.existsSync(STORE_PATH)) {
+      const data = fs.readFileSync(STORE_PATH, "utf-8");
+      const parsed = JSON.parse(data);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not read stored requests file:", err);
+  }
+  return [];
+}
+
+function saveStoredRequests(reqs: any[]) {
+  try {
+    fs.writeFileSync(STORE_PATH, JSON.stringify(reqs, null, 2), "utf-8");
+  } catch (err) {
+    console.warn("Could not save stored requests file:", err);
+  }
+}
+
+const receivedRequests: any[] = loadStoredRequests();
 
 // Server-side Gemini initialization with lazy/safe fallback
 let aiClient: GoogleGenAI | null = null;
@@ -39,6 +69,182 @@ app.get("/api/health", (_req: Request, res: Response) => {
     time: new Date().toISOString(),
     hasGeminiKey: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY"),
   });
+});
+
+// GET /api/requests - Returns customer requests received by the backend
+app.get("/api/requests", (_req: Request, res: Response) => {
+  res.json(receivedRequests);
+});
+
+// POST /api/webhooks/google-forms - Ingests submissions from Google Form / Google Apps Script
+app.post("/api/webhooks/google-forms", (req: Request, res: Response) => {
+  try {
+    let payload = req.body;
+    if (typeof payload === "string") {
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        // payload remains as is
+      }
+    }
+
+    if (!payload || typeof payload !== "object") {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid request payload. Expected JSON object.",
+      });
+    }
+
+    // 2. Validate customerName and description are present
+    const customerName = (
+      payload.customerName ||
+      payload.name ||
+      payload.fullName ||
+      payload["Customer Name"] ||
+      payload["Full Name"] ||
+      payload["Name"] ||
+      ""
+    ).toString().trim();
+
+    const description = (
+      payload.description ||
+      payload.details ||
+      payload.message ||
+      payload["Description"] ||
+      payload["Request Description"] ||
+      payload["Project Details"] ||
+      payload["Service Details"] ||
+      ""
+    ).toString().trim();
+
+    if (!customerName || !description) {
+      return res.status(400).json({
+        success: false,
+        error: "Validation failed: 'customerName' and 'description' are required.",
+      });
+    }
+
+    // 8. Preserve incoming customer name, company name, phone, email, service type, preferred contact method, city, description
+    const companyName = (
+      payload.companyName ||
+      payload.company ||
+      payload["Company Name"] ||
+      payload["Company / Organization"] ||
+      ""
+    ).toString().trim();
+
+    const phone = (
+      payload.phone ||
+      payload.phoneNumber ||
+      payload.telephone ||
+      payload.whatsapp ||
+      payload["Phone"] ||
+      payload["Phone Number"] ||
+      payload["WhatsApp Number"] ||
+      ""
+    ).toString().trim();
+
+    const email = (
+      payload.email ||
+      payload.emailAddress ||
+      payload["Email"] ||
+      payload["Email Address"] ||
+      ""
+    ).toString().trim();
+
+    const city = (
+      payload.city ||
+      payload.location ||
+      payload.town ||
+      payload["City"] ||
+      payload["Location / City"] ||
+      payload["Town"] ||
+      "Cameroon"
+    ).toString().trim();
+
+    const serviceType = (
+      payload.serviceType ||
+      payload.service ||
+      payload["Service Type"] ||
+      payload["Service"] ||
+      payload["Service Category"] ||
+      "Other Services"
+    ).toString().trim();
+
+    const preferredContact = (
+      payload.preferredContact ||
+      payload.preferredContactMethod ||
+      payload.contactMethod ||
+      payload["Preferred Contact Method"] ||
+      payload["Contact Method"] ||
+      payload["Preferred Channel"] ||
+      "WhatsApp"
+    ).toString().trim();
+
+    const budgetEstimate = (
+      payload.budgetEstimate ||
+      payload.budget ||
+      payload["Budget"] ||
+      payload["Budget Estimate"] ||
+      undefined
+    );
+
+    // 4. Generate a unique id and ticketNumber
+    // 7. Set createdAt and updatedAt to the current time
+    const now = new Date().toISOString();
+    const year = new Date().getFullYear();
+    const ticketSeq = String(receivedRequests.length + 1).padStart(4, "0");
+    const ticketNumber = `REQ-${year}-${ticketSeq}`;
+    const id = `req-gf-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    // 3. Convert incoming data into existing CustomerRequest structure
+    // 5. Set status to "New"
+    // 6. Set priority to "Medium"
+    const newRequest = {
+      id,
+      ticketNumber,
+      customerName,
+      companyName,
+      phone,
+      email,
+      city,
+      serviceType,
+      description,
+      preferredContact,
+      status: "New",
+      priority: "Medium",
+      budgetEstimate: budgetEstimate ? String(budgetEstimate).trim() : undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    receivedRequests.unshift(newRequest);
+    saveStoredRequests(receivedRequests);
+
+    console.log(`[Google Forms Webhook] Successfully registered request ${ticketNumber} from ${customerName}`);
+
+    // 9. Return a clear JSON success response containing created request and ticket number
+    // 11. Do not expose API keys or secrets in the response
+    return res.status(201).json({
+      success: true,
+      message: "Customer request created successfully from Google Form submission.",
+      ticketNumber: newRequest.ticketNumber,
+      request: newRequest,
+    });
+  } catch (error: any) {
+    console.error("[Google Forms Webhook] Error processing submission:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error while processing Google Form submission.",
+    });
+  }
+});
+
+// Also support Make.com / Zapier webhook submissions pointing to /api/webhooks/make-zapier
+app.post("/api/webhooks/make-zapier", (req: Request, res: Response) => {
+  // Pass through to the same handler logic
+  req.url = "/api/webhooks/google-forms";
+  return app._router.handle(req, res);
 });
 
 // AI Request Analyzer
